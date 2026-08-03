@@ -76,7 +76,7 @@ export class UploadController {
     next: NextFunction,
   ) {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
 
       if (!req.file) {
         throw new AppError('No image file provided', 400, ERROR_CODES.VALIDATION_ERROR);
