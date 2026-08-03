@@ -5,13 +5,8 @@ import {
   CalendarPlus, XCircle, CheckCircle2, Clock, X,
 } from 'lucide-react'
 import fuoyeLogo from '../../assets/images/fuoye-logo.jpg'
-import {
-  getUser,
-  getNotifications,
-  getUnreadCount,
-  markAllNotificationsRead,
-  timeAgo,
-} from '../../utils/storage'
+import { timeAgo } from '../../utils/helpers'
+import { useAuth } from '../../context/AuthContext'
 
 const PAGE_TITLES = {
   '/dashboard': 'Dashboard',
@@ -38,24 +33,17 @@ function getInitials(name) {
 export default function Navbar({ onMenuClick }) {
   const navigate       = useNavigate()
   const { pathname }   = useLocation()
+  const { user, logout } = useAuth()
 
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [notifOpen,    setNotifOpen]    = useState(false)
+
+  // Notification actions — stubbed until backend notification API is wired up
   const [, forceRender] = useState(0)
+  const markAllNotificationsRead = () => { /* TODO: call api.markNotificationsRead() */ }
 
   const dropdownRef = useRef(null)
   const notifRef    = useRef(null)
-
-  // Re-read localStorage when user profile or notifications change
-  useEffect(() => {
-    const refresh = () => forceRender((n) => n + 1)
-    window.addEventListener('fuoye_user_updated',          refresh)
-    window.addEventListener('fuoye_notifications_updated', refresh)
-    return () => {
-      window.removeEventListener('fuoye_user_updated',          refresh)
-      window.removeEventListener('fuoye_notifications_updated', refresh)
-    }
-  }, [])
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -68,14 +56,13 @@ export default function Navbar({ onMenuClick }) {
     return () => document.removeEventListener('mousedown', close)
   }, [dropdownOpen, notifOpen])
 
-  const user          = getUser()
   const title         = PAGE_TITLES[pathname] ?? 'FUOYE Smart Space'
-  const initials      = getInitials(user?.name)
-  const notifications = getNotifications().slice(0, 8)
-  const unreadCount   = getUnreadCount()
+  const initials      = getInitials(user?.fullName || user?.name)
+  const notifications = []
+  const unreadCount   = 0
 
   const handleLogout = () => {
-    localStorage.removeItem('fuoye_user')
+    logout()
     navigate('/login')
   }
 
@@ -216,9 +203,9 @@ export default function Navbar({ onMenuClick }) {
             </div>
             <div className="text-left hidden sm:block">
               <p className="text-gray-800 text-xs font-semibold leading-none">
-                {user?.name ?? 'Student'}
+                {user?.fullName ?? user?.name ?? 'Student'}
               </p>
-              <p className="text-gray-400 text-[10px] mt-0.5 font-mono">
+              <p className="text-gray-400 text-[10px] mt-0.5 tracking-wide">
                 {user?.matricNumber ?? '---'}
               </p>
             </div>
@@ -234,9 +221,9 @@ export default function Navbar({ onMenuClick }) {
             <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden z-50">
               <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
                 <p className="text-xs font-semibold text-gray-800 truncate">
-                  {user?.name ?? 'Student User'}
+                  {user?.fullName ?? user?.name ?? 'Student User'}
                 </p>
-                <p className="text-[10px] text-gray-400 mt-0.5 font-mono truncate">
+                <p className="text-[10px] text-gray-400 mt-0.5 tracking-wide truncate">
                   {user?.matricNumber ?? '---'}
                 </p>
                 <p className="text-[10px] text-gray-400 truncate">

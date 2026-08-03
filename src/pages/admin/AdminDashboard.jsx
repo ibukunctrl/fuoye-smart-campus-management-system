@@ -1,19 +1,16 @@
-import { useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Building2, BookOpen, CalendarCheck, Users, TrendingUp,
-  Clock, CheckCircle2, XCircle, ArrowRight, Layers,
+  Clock, CheckCircle2, XCircle, ArrowRight, Layers, Loader2
 } from 'lucide-react'
-import { getBookings } from '../../utils/storage'
-import { schoolHostels, schoolHostelStats } from '../../data/schoolHostels'
-import { privateHostels, privateHostelStats } from '../../data/privateHostels'
-import { classrooms } from '../../data/classrooms'
+import { api } from '../../services/api'
 
 const STATUS_CONFIG = {
-  pending:   { label: 'Pending',   bg: '#fffbeb', color: '#b45309', icon: Clock },
-  confirmed: { label: 'Confirmed', bg: '#e8f5e9', color: '#0B5D1E', icon: CheckCircle2 },
-  cancelled: { label: 'Cancelled', bg: '#fef2f2', color: '#dc2626', icon: XCircle },
-  rejected:  { label: 'Rejected',  bg: '#fef2f2', color: '#dc2626', icon: XCircle },
+  PENDING:   { label: 'Pending',   bg: '#fffbeb', color: '#b45309', icon: Clock },
+  CONFIRMED: { label: 'Confirmed', bg: '#e8f5e9', color: '#0B5D1E', icon: CheckCircle2 },
+  CANCELLED: { label: 'Cancelled', bg: '#fef2f2', color: '#dc2626', icon: XCircle },
+  REJECTED:  { label: 'Rejected',  bg: '#fef2f2', color: '#dc2626', icon: XCircle },
 }
 
 function StatCard({ icon: Icon, label, value, sub, color, bg, onClick }) {
@@ -56,15 +53,46 @@ function StatusBadge({ status }) {
 
 export default function AdminDashboard() {
   const navigate = useNavigate()
-  const bookings = useMemo(() => getBookings(), [])
+  
+  const [bookings, setBookings] = useState([])
+  const [hostels, setHostels] = useState([])
+  const [classrooms, setClassrooms] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function loadData() {
+      const [allBookings, allHostels, allClassrooms] = await Promise.all([
+        api.getAllBookings(),
+        api.getHostels(),
+        api.getClassrooms()
+      ]);
+      if (allBookings) setBookings(allBookings);
+      if (allHostels) setHostels(allHostels);
+      if (allClassrooms) setClassrooms(allClassrooms);
+      setLoading(false);
+    }
+    loadData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <Loader2 size={32} className="animate-spin text-green-700" />
+      </div>
+    )
+  }
 
   const totalBookings    = bookings.length
-  const pendingBookings  = bookings.filter((b) => b.status === 'pending').length
-  const confirmedBookings = bookings.filter((b) => b.status === 'confirmed').length
-  const hostelBookings   = bookings.filter((b) => b.type === 'hostel').length
-  const classBookings    = bookings.filter((b) => b.type === 'classroom').length
-  const totalHostels     = schoolHostels.length + privateHostels.length
-  const availableBeds    = schoolHostelStats.availableRooms + privateHostelStats.available
+  const pendingBookings  = bookings.filter((b) => b.status === 'PENDING').length
+  const confirmedBookings = bookings.filter((b) => b.status === 'CONFIRMED').length
+  
+  // Calculate breakdown safely
+  const hostelBookings   = bookings.filter((b) => b.facility?.type.includes('HOSTEL')).length
+  const classBookings    = bookings.filter((b) => b.facility?.type === 'CLASSROOM').length
+  
+  const totalHostels     = hostels.length
+  const availableBeds    = hostels.reduce((sum, h) => sum + h.rooms.reduce((s, r) => s + r.availableBeds, 0), 0)
+  
   const recentBookings   = bookings.slice(0, 6)
 
   return (
@@ -291,10 +319,10 @@ export default function AdminDashboard() {
                   className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
                   style={{
                     backgroundColor:
-                      b.type === "hostel" ? "#0B5D1E" : "#1565c0",
+                      b.facility?.type?.includes("HOSTEL") ? "#0B5D1E" : "#1565c0",
                   }}
                 >
-                  {b.type === "hostel" ? (
+                  {b.facility?.type?.includes("HOSTEL") ? (
                     <Building2 size={15} />
                   ) : (
                     <BookOpen size={15} />
@@ -302,10 +330,10 @@ export default function AdminDashboard() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-gray-700 truncate">
-                    {b.roomName}
+                    {b.facility?.name || 'Unknown'} {b.room?.roomNumber ? `(Room ${b.room.roomNumber})` : ''}
                   </p>
                   <p className="text-[10px] text-gray-400">
-                    {b.purpose} · {b.userMatric ?? "N/A"} · {b.date}
+                    {b.purpose} · {b.user?.matricNumber ?? "N/A"} · {new Date(b.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <StatusBadge status={b.status} />

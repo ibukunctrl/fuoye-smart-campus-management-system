@@ -95,14 +95,14 @@ export default function RoomOptionCard({ roomOption, hostelGender, onSelect, sel
 
         {/* Features */}
         <ul className="space-y-1.5">
-          {features.slice(0, 4).map((f) => (
+          {(features || []).slice(0, 4).map((f) => (
             <li key={f} className="flex items-center gap-2 text-[11px] text-gray-500">
               <CheckCircle2 size={11} style={{ color: '#0B5D1E', flexShrink: 0 }} />
               {f}
             </li>
           ))}
-          {features.length > 4 && (
-            <li className="text-[11px] text-gray-400 pl-5">+{features.length - 4} more</li>
+          {(features || []).length > 4 && (
+            <li className="text-[11px] text-gray-400 pl-5">+{(features || []).length - 4} more</li>
           )}
         </ul>
 

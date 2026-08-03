@@ -1,9 +1,6 @@
-import { useMemo } from 'react'
-import { BarChart3, TrendingUp, Building2, BookOpen, CalendarCheck, Info } from 'lucide-react'
-import { getBookings } from '../../utils/storage'
-import { schoolHostelStats } from '../../data/schoolHostels'
-import { privateHostelStats } from '../../data/privateHostels'
-import { classrooms } from '../../data/classrooms'
+import { useState, useEffect } from 'react'
+import { BarChart3, TrendingUp, Building2, BookOpen, CalendarCheck, Info, Loader2 } from 'lucide-react'
+import { api } from '../../services/api'
 
 function MiniBar({ label, value, max, color }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0
@@ -21,18 +18,48 @@ function MiniBar({ label, value, max, color }) {
 }
 
 export default function AdminAnalytics() {
-  const bookings = useMemo(() => getBookings(), [])
+  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState({ bookings: [], hostels: [], classrooms: [] })
 
-  const hostelBks   = bookings.filter((b) => b.type === 'hostel')
-  const classBks    = bookings.filter((b) => b.type === 'classroom')
-  const pending     = bookings.filter((b) => b.status === 'pending').length
-  const confirmed   = bookings.filter((b) => b.status === 'confirmed').length
-  const rejected    = bookings.filter((b) => b.status === 'rejected').length
-  const cancelled   = bookings.filter((b) => b.status === 'cancelled').length
+  useEffect(() => {
+    async function loadData() {
+      const [bookings, hostels, classrooms] = await Promise.all([
+        api.getAllBookings(),
+        api.getHostels(),
+        api.getClassrooms()
+      ])
+      setData({
+        bookings: bookings || [],
+        hostels: hostels || [],
+        classrooms: classrooms || []
+      })
+      setLoading(false)
+    }
+    loadData()
+  }, [])
 
-  const totalHostelRooms = schoolHostelStats.totalRooms
-  const occupiedRooms    = totalHostelRooms - schoolHostelStats.availableRooms
-  const classAvailable   = classrooms.filter((c) => c.status === 'available').length
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <Loader2 size={32} className="animate-spin text-green-700" />
+      </div>
+    )
+  }
+
+  const { bookings, hostels, classrooms } = data
+
+  const hostelBks   = bookings.filter((b) => b.facility?.type?.includes('HOSTEL'))
+  const classBks    = bookings.filter((b) => !b.facility?.type?.includes('HOSTEL'))
+  const pending     = bookings.filter((b) => b.status === 'PENDING').length
+  const confirmed   = bookings.filter((b) => b.status === 'CONFIRMED').length
+  const rejected    = bookings.filter((b) => b.status === 'REJECTED').length
+  const cancelled   = bookings.filter((b) => b.status === 'CANCELLED').length
+
+  const totalHostelRooms = hostels.reduce((sum, h) => sum + h.rooms.length, 0)
+  const availableHostelRooms = hostels.reduce((sum, h) => sum + h.rooms.filter(r => r.availableBeds > 0).length, 0)
+  const occupiedRooms = totalHostelRooms - availableHostelRooms
+
+  const classAvailable = classrooms.filter((c) => !c.rooms?.some(r => r.isOccupied)).length
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -40,14 +67,6 @@ export default function AdminAnalytics() {
       <div>
         <h1 className="text-xl font-bold text-gray-800">Analytics</h1>
         <p className="text-xs text-gray-400 mt-0.5">Space usage and booking statistics overview</p>
-      </div>
-
-      {/* Coming soon banner */}
-      <div className="flex items-start gap-3 p-4 rounded-2xl border border-blue-100 bg-blue-50">
-        <Info size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-blue-700 leading-relaxed">
-          <strong>Advanced analytics coming soon.</strong> Charts, date-range filters, and export features will be added in the next development phase. Current view shows live data from localStorage.
-        </p>
       </div>
 
       {/* Summary cards */}
@@ -87,15 +106,15 @@ export default function AdminAnalytics() {
 
         {/* Hostel occupancy */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h3 className="text-sm font-bold text-gray-700 mb-5">School Hostel Occupancy</h3>
+          <h3 className="text-sm font-bold text-gray-700 mb-5">Hostel Occupancy</h3>
           <div className="space-y-4">
             <MiniBar label="Occupied Rooms"   value={occupiedRooms}                    max={totalHostelRooms} color="#0B5D1E" />
-            <MiniBar label="Available Rooms"  value={schoolHostelStats.availableRooms} max={totalHostelRooms} color="#22c55e" />
+            <MiniBar label="Available Rooms"  value={availableHostelRooms} max={totalHostelRooms} color="#22c55e" />
             <MiniBar label="Classrooms Open"  value={classAvailable}                   max={classrooms.length} color="#1565c0" />
           </div>
           <div className="mt-5 pt-4 border-t border-gray-50">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-500">School hostel fill rate</span>
+              <span className="text-gray-500">Hostel fill rate</span>
               <span className="font-black text-gray-800">
                 {totalHostelRooms > 0 ? Math.round((occupiedRooms / totalHostelRooms) * 100) : 0}%
               </span>

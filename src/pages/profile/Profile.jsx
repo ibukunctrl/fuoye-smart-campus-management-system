@@ -1,22 +1,37 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Phone, Mail, Building2, CheckCircle2 } from 'lucide-react'
+import { User, Phone, Mail, Building2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Card, Button, Input } from '../../components/common'
-import { getUser, saveUser } from '../../utils/storage'
+import { useAuth } from '../../context/AuthContext'
+import { api } from '../../services/api'
 
 export default function Profile() {
   const navigate  = useNavigate()
-  const current   = getUser() ?? {}
+  const { user, setUser } = useAuth()
+  const current = user ?? {}
 
   const [form, setForm] = useState({
-    name:       current.name       ?? '',
+    name:       current.fullName ?? '',
     department: current.department ?? '',
     email:      current.email      ?? '',
-    phone:      current.phone      ?? '',
+    phone:      current.phoneNumber ?? '',
   })
+  
+  useEffect(() => {
+    if (user) {
+      setForm({
+        name:       user.fullName  ?? '',
+        department: user.department ?? '',
+        email:      user.email      ?? '',
+        phone:      user.phoneNumber ?? '',
+      })
+    }
+  }, [user])
+
   const [errors,  setErrors]  = useState({})
   const [saving,  setSaving]  = useState(false)
   const [saved,   setSaved]   = useState(false)
+  const [apiError, setApiError] = useState('')
 
   function field(key) {
     return {
@@ -25,6 +40,7 @@ export default function Profile() {
         setForm((f) => ({ ...f, [key]: e.target.value }))
         if (errors[key]) setErrors((er) => ({ ...er, [key]: undefined }))
         setSaved(false)
+        setApiError('')
       },
     }
   }
@@ -46,18 +62,20 @@ export default function Profile() {
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     setSaving(true)
-    await new Promise((r) => setTimeout(r, 800))
-
-    saveUser({
-      ...current,
-      name:       form.name.trim(),
-      department: form.department.trim(),
-      email:      form.email.trim(),
-      phone:      form.phone.trim(),
+    setApiError('')
+    const res = await api.updateProfile({
+      fullName:    form.name,
+      department:  form.department,
+      phoneNumber: form.phone,
     })
-
     setSaving(false)
-    setSaved(true)
+
+    if (res?.success) {
+      setUser(res.user) // Refresh AuthContext so Sidebar updates immediately
+      setSaved(true)
+    } else {
+      setApiError(res?.message || 'Failed to save profile.')
+    }
   }
 
   return (
@@ -141,6 +159,14 @@ export default function Profile() {
             <div className="flex items-center gap-2 p-3 rounded-xl bg-green-50 border border-green-100">
               <CheckCircle2 size={15} style={{ color: '#0B5D1E' }} />
               <p className="text-xs text-green-700 font-medium">Profile updated successfully.</p>
+            </div>
+          )}
+
+          {/* API error */}
+          {apiError && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-100">
+              <AlertCircle size={15} className="text-red-500 flex-shrink-0" />
+              <p className="text-xs text-red-600 font-medium">{apiError}</p>
             </div>
           )}
 

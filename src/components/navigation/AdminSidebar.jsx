@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, BookOpen, CalendarCheck,
   BarChart3, Users, Settings, LogOut, X, ShieldCheck,
 } from 'lucide-react'
 import fuoyeLogo from '../../assets/images/fuoye-logo.jpg'
-import { getUser } from '../../utils/storage'
+import { useAuth } from '../../context/AuthContext'
 
 const navItems = [
   { label: 'Overview',             path: '/admin/dashboard',  icon: LayoutDashboard },
@@ -19,18 +18,10 @@ const navItems = [
 
 export default function AdminSidebar({ isOpen, onClose }) {
   const navigate = useNavigate()
-  const [, forceRender] = useState(0)
-
-  useEffect(() => {
-    const refresh = () => forceRender((n) => n + 1)
-    window.addEventListener('fuoye_user_updated', refresh)
-    return () => window.removeEventListener('fuoye_user_updated', refresh)
-  }, [])
-
-  const user = getUser()
+  const { user, logout } = useAuth()
 
   function handleLogout() {
-    localStorage.removeItem('fuoye_user')
+    logout()
     navigate('/login')
   }
 
@@ -119,10 +110,10 @@ export default function AdminSidebar({ isOpen, onClose }) {
             className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
             style={{ backgroundColor: '#fbbf24' }}
           >
-            {(user?.name ?? 'AD').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+            {(user?.fullName ?? user?.name ?? 'AD').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-white text-xs font-semibold truncate">{user?.name ?? 'Admin'}</p>
+            <p className="text-white text-xs font-semibold truncate">{user?.fullName ?? user?.name ?? 'Admin'}</p>
             <p className="text-white/40 text-[10px] truncate">{user?.email ?? 'admin@fuoye.edu.ng'}</p>
           </div>
         </div>

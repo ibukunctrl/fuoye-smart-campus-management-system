@@ -1,0 +1,138 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  STAFF
+  AGENT
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+}
+
+enum SpaceType {
+  SCHOOL_HOSTEL
+  PRIVATE_HOSTEL
+  CLASSROOM
+  LABORATORY
+}
+
+model User {
+  id             String    @id @default(uuid())
+  matricNumber   String    @unique
+  email          String    @unique
+  passwordHash   String
+  fullName       String
+  role           Role      @default(STUDENT)
+  department     String?
+  level          String?
+  phoneNumber    String?
+  avatarUrl      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  bookings       Booking[]
+  notifications  Notification[]
+  facilities     Facility[]
+
+  @@index([matricNumber, email])
+}
+
+model Facility {
+  id                     String    @id @default(uuid())
+  name                   String
+  slug                   String    @unique
+  code                   String?
+  type                   SpaceType
+  description            String?
+  location               String
+  capacity               Int
+  price                  Decimal?  @db.Decimal(10, 2)
+  amenities              String[]
+  rules                  String[]  @default([])
+  imageUrl               String?
+  contact                Json?
+  availableForInspection Boolean   @default(true)
+  featured               Boolean   @default(false)
+  verified               Boolean   @default(false)
+  rating                 Float?
+  reviewCount            Int       @default(0)
+  isActive               Boolean   @default(true)
+  agentId                String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  agent          User?     @relation(fields: [agentId], references: [id])
+  rooms          Room[]
+  bookings       Booking[]
+
+  @@index([type, isActive])
+  @@index([agentId])
+}
+
+model Room {
+  id             String    @id @default(uuid())
+  facilityId     String
+  roomNumber     String
+  floor          Int?
+  totalBeds      Int       @default(1)
+  availableBeds  Int       @default(1)
+  pricePerBed    Decimal?  @db.Decimal(10, 2)
+  isOccupied     Boolean   @default(false)
+  version        Int       @default(0)
+
+  facility       Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  bookings       Booking[]
+
+  @@unique([facilityId, roomNumber])
+  @@index([availableBeds, isOccupied])
+}
+
+model Booking {
+  id                 String        @id @default(uuid())
+  userId             String
+  facilityId         String
+  roomId             String?
+  status             BookingStatus @default(CONFIRMED)
+  requiresInspection Boolean       @default(true)
+  inspectionDate     DateTime?
+  startTime          DateTime
+  endTime            DateTime
+  purpose            String?
+  adminNotes         String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facility       Facility      @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  room           Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([roomId, startTime, endTime])
+}
+
+model Notification {
+  id             String    @id @default(uuid())
+  userId         String
+  title          String
+  message        String
+  type           String
+  isRead         Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}

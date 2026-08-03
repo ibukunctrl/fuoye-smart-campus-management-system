@@ -14,11 +14,16 @@ const VIEW_TABS = [
 ]
 
 export default function HostelGallery({ hostel }) {
-  const { gender, images, name } = hostel
+  const { gender, images, name, imageUrl } = hostel
   const [activeTab, setActiveTab]     = useState('outdoor')
   const [activeIndex, setActiveIndex] = useState(0)
 
-  const photos    = images?.[activeTab] ?? []
+  // Prepend the Cloudinary imageUrl to the outdoor gallery if it exists
+  const rawOutdoor = images?.outdoor ?? []
+  const outdoor    = imageUrl ? [imageUrl, ...rawOutdoor.filter(img => img !== imageUrl)] : rawOutdoor
+  const indoor     = images?.indoor ?? []
+
+  const photos    = activeTab === 'outdoor' ? outdoor : indoor
   const hasPhotos = photos.length > 0
   const gradient  = genderGradients[gender] ?? genderGradients.Mixed
   const safeIndex = Math.min(activeIndex, Math.max(photos.length - 1, 0))
@@ -36,8 +41,8 @@ export default function HostelGallery({ hostel }) {
     setActiveIndex(0)
   }
 
-  const outdoorCount = images?.outdoor?.length ?? 0
-  const indoorCount  = images?.indoor?.length  ?? 0
+  const outdoorCount = outdoor.length
+  const indoorCount  = indoor.length
 
   return (
     <div className="space-y-3">

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, User, Lock, Info, ChevronRight, CheckCircle2, Eye, EyeOff } from 'lucide-react'
+import { User, Lock, CheckCircle2, AlertCircle, ChevronRight } from 'lucide-react'
 import { Card, Button, Input } from '../../components/common'
-import { getSettings, saveSettings } from '../../utils/storage'
 import { cn } from '../../utils/cn'
+import { api } from '../../services/api'
 
 function Toggle({ checked, onChange }) {
   return (
@@ -42,20 +42,24 @@ const EMPTY_PW = { current: '', next: '', confirm: '' }
 
 export default function Settings() {
   const navigate = useNavigate()
-  const [prefs, setPrefs]     = useState(getSettings)
+  const [prefs, setPrefs] = useState({
+    emailNotifications: true,
+    bookingReminders: true,
+    systemAlerts: true,
+  })
   const [prefSaved, setPrefSaved] = useState(false)
 
-  const [pw, setPw]           = useState(EMPTY_PW)
+  const [pw, setPw]             = useState(EMPTY_PW)
   const [pwErrors, setPwErrors] = useState({})
   const [pwSaving, setPwSaving] = useState(false)
   const [pwSaved,  setPwSaved]  = useState(false)
+  const [pwApiError, setPwApiError] = useState('')
   const [showCurrent, setShowCurrent] = useState(false)
   const [showNew,     setShowNew]     = useState(false)
 
   function togglePref(key, val) {
     const updated = { ...prefs, [key]: val }
     setPrefs(updated)
-    saveSettings(updated)
     setPrefSaved(true)
     setTimeout(() => setPrefSaved(false), 2000)
   }
@@ -73,11 +77,16 @@ export default function Settings() {
     const errs = validatePw()
     if (Object.keys(errs).length) { setPwErrors(errs); return }
     setPwSaving(true)
-    await new Promise((r) => setTimeout(r, 900))
+    setPwApiError('')
+    const res = await api.changePassword(pw.current, pw.next)
     setPwSaving(false)
-    setPwSaved(true)
-    setPw(EMPTY_PW)
-    setPwErrors({})
+    if (res?.success) {
+      setPwSaved(true)
+      setPw(EMPTY_PW)
+      setPwErrors({})
+    } else {
+      setPwApiError(res?.message || 'Failed to change password.')
+    }
   }
 
   return (
@@ -200,8 +209,15 @@ export default function Settings() {
             <div className="flex items-center gap-2 p-3 rounded-xl bg-green-50 border border-green-100">
               <CheckCircle2 size={15} style={{ color: "#0B5D1E" }} />
               <p className="text-xs text-green-700 font-medium">
-                Password updated successfully. (Demo only — no real auth.)
+                Password changed successfully.
               </p>
+            </div>
+          )}
+
+          {pwApiError && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-100">
+              <AlertCircle size={15} className="text-red-500 flex-shrink-0" />
+              <p className="text-xs text-red-600 font-medium">{pwApiError}</p>
             </div>
           )}
 

@@ -1,27 +1,28 @@
 import { Navigate, Outlet } from 'react-router-dom'
-import { getUser } from '../utils/storage'
+import { useAuth } from '../context/AuthContext'
+import { Loader2 } from 'lucide-react'
 
-/**
- * Generic protected route.
- *
- * Props:
- *   requiredRole  — 'student' | 'admin' | undefined
- *
- * Behaviour:
- *   - Not logged in               → /login
- *   - Logged in, wrong role       → appropriate fallback dashboard
- *   - Logged in, correct role     → render children
- */
 export default function ProtectedRoute({ requiredRole }) {
-  const user = getUser()
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
+        <Loader2 size={32} className="animate-spin text-[#0B5D1E]" />
+      </div>
+    )
+  }
 
   if (!user) return <Navigate to="/login" replace />
 
   if (requiredRole) {
-    if (user.role !== requiredRole) {
-      // Admin trying student route → their admin dashboard
-      // Student trying admin route → their student dashboard
-      return <Navigate to={user.role === 'admin' ? '/admin/dashboard' : '/dashboard'} replace />
+    const userRole = (user.role || '').toLowerCase()
+    const reqRole = (requiredRole || '').toLowerCase()
+
+    if (userRole !== reqRole) {
+      if (userRole === 'admin') return <Navigate to="/admin/dashboard" replace />
+      if (userRole === 'agent') return <Navigate to="/agent/dashboard" replace />
+      return <Navigate to="/dashboard" replace />
     }
   }
 

@@ -1,6 +1,6 @@
 import { useLocation } from 'react-router-dom'
 import { Menu, ShieldCheck } from 'lucide-react'
-import { getUser } from '../../utils/storage'
+import { useAuth } from '../../context/AuthContext'
 
 const PAGE_TITLES = {
   '/admin/dashboard':  'Overview',
@@ -14,7 +14,7 @@ const PAGE_TITLES = {
 
 export default function AdminNavbar({ onMenuClick }) {
   const { pathname } = useLocation()
-  const user         = getUser()
+  const { user }     = useAuth()
   const title        = PAGE_TITLES[pathname] ?? 'Admin Panel'
 
   return (
@@ -50,7 +50,7 @@ export default function AdminNavbar({ onMenuClick }) {
       <div className="flex items-center gap-3">
         <div className="text-right hidden sm:block">
           <p className="text-gray-800 text-xs font-semibold leading-none">
-            {user?.name ?? 'Admin'}
+            {user?.fullName ?? user?.name ?? 'Admin'}
           </p>
           <p className="text-gray-400 text-[10px] mt-0.5 truncate max-w-[160px]">
             {user?.email ?? 'admin@fuoye.edu.ng'}
@@ -60,7 +60,7 @@ export default function AdminNavbar({ onMenuClick }) {
           className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
           style={{ backgroundColor: '#0B5D1E' }}
         >
-          {(user?.name ?? 'AD').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+          {(user?.fullName ?? user?.name ?? 'AD').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
         </div>
       </div>
     </header>

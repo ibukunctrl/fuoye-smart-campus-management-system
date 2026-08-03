@@ -11,23 +11,13 @@ import {
 } from 'lucide-react'
 import { Button, Input, Card, Badge, EmptyState, Spinner } from '../../components/common'
 import RoomCard from '../../components/cards/RoomCard'
-import { classrooms } from '../../data/classrooms'
-import {
-  getUser,
-  getBookings,
-  addBooking,
-  setRoomState,
-  mergeRoomStates,
-  addNotification,
-  formatDate,
-} from '../../utils/storage'
+import { api } from '../../services/api'
 import { cn } from '../../utils/cn'
 
 const STATUS_FILTERS = [
   { label: 'All Rooms',   value: 'all' },
   { label: 'Available',   value: 'available' },
   { label: 'Booked',      value: 'booked' },
-  { label: 'Maintenance', value: 'maintenance' },
 ]
 
 const TIME_SLOTS = [
@@ -55,14 +45,12 @@ const selectClass = (hasError = false) => cn(
 export default function ClassroomBooking() {
   const navigate = useNavigate()
 
-  // Simulate initial data fetch
   const [pageLoading, setPageLoading] = useState(true)
   const [rooms, setRooms]             = useState([])
   const [search, setSearch]           = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [facultyFilter, setFacultyFilter] = useState('all')
 
-  // Modal state
   const [selectedRoom, setSelectedRoom] = useState(null)
   const [form, setForm]                 = useState(EMPTY_FORM)
   const [errors, setErrors]             = useState({})
@@ -70,15 +58,31 @@ export default function ClassroomBooking() {
   const [success, setSuccess]           = useState(false)
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      // Merge persisted availability deltas so booked rooms stay booked after refresh
-      setRooms(mergeRoomStates(classrooms))
+    async function load() {
+      const data = await api.getClassrooms()
+      if (data) {
+        const mapped = data.map(c => {
+          const isOccupied = c.rooms?.some(r => r.isOccupied)
+          return {
+            id: c.id,
+            roomId: c.rooms?.[0]?.id,
+            code: c.slug.substring(0, 6).toUpperCase(),
+            name: c.name,
+            faculty: c.location,
+            building: c.location,
+            capacity: c.capacity,
+            features: c.amenities,
+            status: isOccupied ? 'booked' : 'available',
+            available: !isOccupied
+          }
+        })
+        setRooms(mapped)
+      }
       setPageLoading(false)
-    }, 600)
-    return () => clearTimeout(t)
+    }
+    load()
   }, [])
 
-  // Escape key closes modal
   useEffect(() => {
     if (!selectedRoom) return
     const handler = (e) => { if (e.key === 'Escape') closeModal() }
@@ -87,7 +91,7 @@ export default function ClassroomBooking() {
   }, [selectedRoom])
 
   // Derived values
-  const faculties      = ['all', ...new Set(classrooms.map((r) => r.faculty))]
+  const faculties      = ['all', ...new Set(rooms.map((r) => r.faculty))]
   const availableCount = rooms.filter((r) => r.status === 'available').length
   const bookedCount    = rooms.filter((r) => r.status === 'booked').length
   const maintCount     = rooms.filter((r) => r.status === 'maintenance').length
@@ -137,15 +141,6 @@ export default function ClassroomBooking() {
       else if (n > selectedRoom.capacity)
         e.attendees = `Exceeds room capacity (${selectedRoom.capacity.toLocaleString()})`
     }
-    // Duplicate booking check
-    const duplicate = getBookings().find(
-      (b) =>
-        b.roomId    === selectedRoom.id &&
-        b.date      === form.date &&
-        b.startTime === form.startTime &&
-        (b.status === 'pending' || b.status === 'confirmed'),
-    )
-    if (duplicate) e.duplicate = 'This room is already booked for the selected date and time.'
     return e
   }
 
@@ -155,47 +150,35 @@ export default function ClassroomBooking() {
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     setSubmitting(true)
-    await new Promise((res) => setTimeout(res, 1200))
+    
+    // Parse times
+    const startStr = `${form.date} ${form.startTime}`
+    const startObj = new Date(startStr)
+    const endObj = new Date(startObj.getTime() + Number(form.duration) * 3600000)
+
+    const bookingData = {
+      facilityId: selectedRoom.id,
+      roomId: selectedRoom.roomId,
+      purpose: form.purpose.trim(),
+      startTime: startObj.toISOString(),
+      endTime: endObj.toISOString()
+    }
+
+    const res = await api.createBooking(bookingData)
     setSubmitting(false)
 
-    const user    = getUser()
-    const booking = {
-      id:         `BK-${Date.now()}`,
-      type:       'classroom',
-      roomId:     selectedRoom.id,
-      roomCode:   selectedRoom.code,
-      roomName:   selectedRoom.name,
-      purpose:    form.purpose.trim(),
-      date:       form.date,
-      startTime:  form.startTime,
-      duration:   `${form.duration} hour${Number(form.duration) > 1 ? 's' : ''}`,
-      attendees:  form.attendees ? Number(form.attendees) : null,
-      status:     'pending',
-      createdAt:  new Date().toISOString(),
-      userMatric: user?.matricNumber ?? 'Unknown',
+    if (res?.success) {
+      setRooms((prev) =>
+        prev.map((r) =>
+          r.id === selectedRoom.id ? { ...r, available: false, status: 'booked' } : r,
+        ),
+      )
+      setSuccess(true)
+    } else {
+      setErrors({ duplicate: res?.message || 'Failed to submit booking.' })
     }
-    addBooking(booking)
-
-    // Persist room state so it survives refresh
-    setRoomState(selectedRoom.id, { available: false, status: 'booked' })
-
-    // Add notification
-    addNotification({
-      type:      'booking_created',
-      bookingId: booking.id,
-      message:   `Booking request for ${selectedRoom.name} on ${formatDate(form.date)} submitted successfully.`,
-    })
-
-    // Optimistic UI update
-    setRooms((prev) =>
-      prev.map((r) =>
-        r.id === selectedRoom.id ? { ...r, available: false, status: 'booked' } : r,
-      ),
-    )
-    setSuccess(true)
   }
 
-  // ── Loading skeleton ──────────────────────────────────────────────────────
   if (pageLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">

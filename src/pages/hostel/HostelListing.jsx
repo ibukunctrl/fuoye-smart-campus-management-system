@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { Building2, Home, Sparkles, TrendingUp } from 'lucide-react'
+import { useState, useMemo, useEffect } from 'react'
+import { Building2, Home, Sparkles, TrendingUp, Loader2 } from 'lucide-react'
 import { EmptyState, Button } from '../../components/common'
 import {
   HostelCard,
@@ -7,8 +7,7 @@ import {
   HostelTabs,
   HostelFilters,
 } from '../../components/hostels'
-import { schoolHostels, schoolHostelStats } from '../../data/schoolHostels'
-import { privateHostels, privateHostelStats } from '../../data/privateHostels'
+import { api } from '../../services/api'
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 const PRICE_RANGES = {
@@ -31,7 +30,6 @@ function extractMinutes(distanceStr) {
 }
 
 const DEFAULT_FILTERS = { gender: 'all', status: 'all', price: 'all', distance: 'all' }
-const allHostels      = [...schoolHostels, ...privateHostels]
 
 // ── Summary stat chip ───────────────────────────────────────────────────────
 function StatChip({ icon: Icon, label, color }) {
@@ -47,13 +45,49 @@ export default function HostelListing() {
   const [activeTab, setActiveTab] = useState('school')
   const [search, setSearch]       = useState('')
   const [filters, setFilters]     = useState(DEFAULT_FILTERS)
+  const [hostels, setHostels]     = useState([])
+  const [loading, setLoading]     = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const data = await api.getHostels()
+      if (data) {
+        const mapped = data.map(h => {
+          const totalBeds = h.rooms.reduce((s, r) => s + r.totalBeds, 0) || 0
+          const availableBeds = h.rooms.reduce((s, r) => s + r.availableBeds, 0) || 0
+          const occupancyRate = totalBeds > 0 ? Math.round(((totalBeds - availableBeds) / totalBeds) * 100) : 0
+          let status = 'available'
+          if (occupancyRate >= 100) status = 'full'
+          else if (occupancyRate >= 80) status = 'limited'
+
+          return {
+            ...h,
+            category: h.type === 'SCHOOL_HOSTEL' ? 'school' : 'private',
+            status,
+            occupancyRate,
+            priceRange: { min: Number(h.price || 0) },
+            gender: h.amenities?.find(a => a.toLowerCase().includes('female')) ? 'Female' : (h.amenities?.find(a => a.toLowerCase().includes('male')) ? 'Male' : 'Mixed'),
+            featured: h.amenities?.includes('WiFi'), // mock featured logic
+            distanceFromCampus: h.location.includes('Campus') ? '0 mins' : '15 mins',
+            tags: h.amenities
+          }
+        })
+        setHostels(mapped)
+      }
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  const schoolHostels = useMemo(() => hostels.filter(h => h.category === 'school'), [hostels])
+  const privateHostels = useMemo(() => hostels.filter(h => h.category === 'private'), [hostels])
 
   const baseList = activeTab === 'school' ? schoolHostels : privateHostels
 
   // Featured: from both categories, show at most 4
   const featuredHostels = useMemo(
-    () => allHostels.filter((h) => h.featured).slice(0, 4),
-    [],
+    () => hostels.filter((h) => h.featured).slice(0, 4),
+    [hostels],
   )
 
   // Filtered list
@@ -100,6 +134,17 @@ export default function HostelListing() {
   }
 
   const tabCounts = { school: schoolHostels.length, private: privateHostels.length }
+  const schoolAvailable = schoolHostels.filter(h => h.status === 'available').length
+  const privateAvailable = privateHostels.filter(h => h.status === 'available').length
+  const schoolBeds = schoolHostels.reduce((s, h) => s + (h.rooms?.reduce((rSum, r) => rSum + (r.availableBeds || 0), 0) || 0), 0)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <Loader2 size={32} className="animate-spin text-green-700" />
+      </div>
+    )
+  }
 
   // ── Page ────────────────────────────────────────────────────────────────
   return (
@@ -114,9 +159,9 @@ export default function HostelListing() {
           </p>
         </div>
         <div className="flex items-center gap-5 flex-wrap">
-          <StatChip icon={Building2}   label={`${schoolHostelStats.available} school available`}   color="#0B5D1E" />
-          <StatChip icon={Home}        label={`${privateHostelStats.available} private available`}  color="#6a1b9a" />
-          <StatChip icon={TrendingUp}  label={`${schoolHostelStats.availableRooms} beds free`}     color="#1565c0" />
+          <StatChip icon={Building2}   label={`${schoolAvailable} school available`}   color="#0B5D1E" />
+          <StatChip icon={Home}        label={`${privateAvailable} private available`}  color="#6a1b9a" />
+          <StatChip icon={TrendingUp}  label={`${schoolBeds} beds free`}     color="#1565c0" />
         </div>
       </div>
 

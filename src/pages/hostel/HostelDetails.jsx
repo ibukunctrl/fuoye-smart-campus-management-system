@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, MapPin, ShieldCheck, Star, Users,
   CheckCircle2, CalendarCheck, X, CalendarDays,
-  Flame, Sparkles, BedDouble, BarChart3, Phone, Info,
+  Sparkles, BedDouble, BarChart3, Phone, Info,
 } from 'lucide-react'
 import { Button, Input, Spinner, EmptyState } from '../../components/common'
 import {
@@ -11,21 +11,13 @@ import {
   RoomOptionCard,
   AvailabilityBadge,
 } from '../../components/hostels'
-import { schoolHostels } from '../../data/schoolHostels'
-import { privateHostels } from '../../data/privateHostels'
-import {
-  getUser,
-  getBookings,
-  addBooking,
-  addNotification,
-} from '../../utils/storage'
+import { api } from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
 import { cn } from '../../utils/cn'
-
-const ALL_HOSTELS = [...schoolHostels, ...privateHostels]
 
 const SESSIONS = ['2025/2026 Session', '2026/2027 Session']
 
-const EMPTY_FORM = { studentName: '', session: '', moveInDate: '' }
+const EMPTY_FORM = { studentName: '', session: '', moveInDate: '', requiresInspection: true, inspectionDate: '' }
 
 const selectClass = (hasError = false) => cn(
   'w-full h-[42px] px-4 rounded-xl border text-sm text-gray-600 outline-none transition-all duration-200',
@@ -63,6 +55,7 @@ function SectionHeader({ title, subtitle }) {
 export default function HostelDetails() {
   const { slug }   = useParams()
   const navigate   = useNavigate()
+  const { user: authUser } = useAuth()
 
   const [pageLoading, setPageLoading]   = useState(true)
   const [hostel, setHostel]             = useState(null)
@@ -73,14 +66,57 @@ export default function HostelDetails() {
   const [errors, setErrors]         = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess]       = useState(false)
+  const [profile, setProfile]       = useState(null)
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      const found = ALL_HOSTELS.find((h) => h.slug === slug)
-      setHostel(found ?? null)
+    async function load() {
+      const user = await api.getProfile()
+      if (user) setProfile(user)
+
+      const found = await api.getFacility(slug)
+      if (found) {
+        const totalBeds = found.rooms.reduce((s, r) => s + r.totalBeds, 0) || 0
+        const availableBeds = found.rooms.reduce((s, r) => s + r.availableBeds, 0) || 0
+        const occupancyRate = totalBeds > 0 ? Math.round(((totalBeds - availableBeds) / totalBeds) * 100) : 0
+        let status = 'available'
+        if (occupancyRate >= 100) status = 'full'
+        else if (occupancyRate >= 80) status = 'limited'
+        
+        setHostel({
+          ...found,
+          category: found.type === 'SCHOOL_HOSTEL' ? 'school' : 'private',
+          status,
+          occupancyRate,
+          totalRooms: found.rooms.length,
+          availableRooms: found.rooms.filter(r => !r.isOccupied).length,
+          priceRange: { min: Number(found.price || 0), max: Number(found.price || 0) },
+          gender: found.amenities?.find(a => a.toLowerCase().includes('female only')) ? 'Female'
+                : found.amenities?.find(a => a.toLowerCase().includes('male only'))   ? 'Male'
+                : 'Mixed',
+          distanceFromCampus: found.location?.toLowerCase().includes('campus') ? '0 mins' : '15 mins',
+          tags: found.amenities,
+          code:                   found.code                   ?? found.slug?.toUpperCase().slice(0, 4),
+          availableForInspection: found.availableForInspection ?? true,
+          featured:               found.featured               ?? false,
+          verified:               found.verified               ?? false,
+          rating:                 found.rating                 ?? null,
+          reviewCount:            found.reviewCount            ?? 0,
+          contact:                found.contact                ?? null,
+          rules:                  found.rules                  ?? [],
+          roomOptions: found.rooms.map(r => ({
+            id: r.id,
+            type: r.roomNumber,
+            pricePerBed: Number(r.pricePerBed || found.price),
+            pricePeriod: 'session',
+            capacity: r.totalBeds,
+            available: r.isOccupied ? 0 : 1,
+            amenities: []
+          }))
+        })
+      }
       setPageLoading(false)
-    }, 400)
-    return () => clearTimeout(t)
+    }
+    load()
   }, [slug])
 
   useEffect(() => {
@@ -91,9 +127,15 @@ export default function HostelDetails() {
   }, [modalOpen])
 
   function openBookingModal(room) {
-    const user = getUser()
     setSelectedRoom(room)
-    setForm({ ...EMPTY_FORM, studentName: user?.name ?? '' })
+    setForm({
+      ...EMPTY_FORM,
+      studentName: authUser?.fullName ?? profile?.fullName ?? '',
+      requiresInspection: hostel?.availableForInspection ?? true,
+      inspectionDate: new Date().toISOString().split('T')[0],
+      session: SESSIONS[0],
+      moveInDate: new Date().toISOString().split('T')[0],
+    })
     setErrors({})
     setSuccess(false)
     setModalOpen(true)
@@ -110,14 +152,10 @@ export default function HostelDetails() {
     if (!form.studentName.trim()) e.studentName = 'Student name is required'
     if (!form.session)            e.session     = 'Please select an academic session'
     if (!form.moveInDate)         e.moveInDate  = 'Please select a move-in date'
-    const duplicate = getBookings().find(
-      (b) =>
-        b.type     === 'hostel' &&
-        b.roomId   === hostel.id &&
-        b.duration === form.session &&
-        (b.status === 'pending' || b.status === 'confirmed'),
-    )
-    if (duplicate) e.duplicate = 'You already have an active hostel booking for this session.'
+    if (form.requiresInspection && !form.inspectionDate) {
+      e.inspectionDate = 'Please select a preferred inspection date'
+    }
+    if (!selectedRoom)            e.duplicate   = 'Please select a room type from the list before booking.'
     return e
   }
 
@@ -127,416 +165,247 @@ export default function HostelDetails() {
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     setSubmitting(true)
-    await new Promise((res) => setTimeout(res, 1200))
+    
+    const startTime = new Date(form.moveInDate).toISOString()
+    const endTime = new Date(new Date(form.moveInDate).setFullYear(new Date(form.moveInDate).getFullYear() + 1)).toISOString()
+    const inspDate = form.requiresInspection && form.inspectionDate ? new Date(form.inspectionDate).toISOString() : null
+
+    const bookingData = {
+      facilityId: hostel.id,
+      roomId: selectedRoom.id,
+      startTime,
+      endTime,
+      requiresInspection: form.requiresInspection,
+      inspectionDate: inspDate,
+      purpose: form.requiresInspection ? 'Physical Inspection Request' : 'Direct Room Rental',
+    }
+
+    const res = await api.createBooking(bookingData)
     setSubmitting(false)
 
-    const user    = getUser()
-    const booking = {
-      id:         `BK-${Date.now()}`,
-      type:       'hostel',
-      roomId:     hostel.id,
-      roomCode:   hostel.code,
-      roomName:   hostel.name,
-      purpose:    selectedRoom?.type ?? 'Hostel Bed',
-      date:       form.moveInDate,
-      startTime:  '',
-      duration:   form.session,
-      attendees:  null,
-      status:     'pending',
-      createdAt:  new Date().toISOString(),
-      userMatric: user?.matricNumber ?? 'Unknown',
+    if (res?.success || res?.id || res?.status) {
+      setSuccess(true)
+    } else {
+      setErrors({ duplicate: res?.message || 'Failed to submit request.' })
     }
-    addBooking(booking)
-    addNotification({
-      type:      'booking_created',
-      bookingId: booking.id,
-      message:   `Hostel bed request for ${hostel.name}${selectedRoom ? ` (${selectedRoom.type})` : ''} submitted successfully.`,
-    })
-    setSuccess(true)
   }
 
-  // ── Loading ───────────────────────────────────────────────────────────────
   if (pageLoading) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-3">
-        <Spinner size="lg" centered />
-        <p className="text-xs text-gray-400">Loading hostel details…</p>
+      <div className="h-[60vh] w-full flex items-center justify-center">
+        <Spinner size="lg" />
       </div>
     )
   }
 
   if (!hostel) {
     return (
-      <div className="max-w-4xl mx-auto">
-        <EmptyState
-          icon={MapPin}
-          title="Hostel not found"
-          description="The hostel you're looking for doesn't exist or may have been removed."
-          action={
-            <Button onClick={() => navigate('/hostel')}>Back to Hostel Listing</Button>
-          }
-        />
-      </div>
+      <EmptyState
+        title="Hostel not found"
+        description="The hostel space you are looking for does not exist or has been removed."
+        actionLabel="Back to Hostels"
+        onAction={() => navigate('/hostel')}
+      />
     )
   }
 
-  const catConfig    = categoryConfig[hostel.category] ?? categoryConfig.school
-  const gStyle       = genderStyles[hostel.gender] ?? genderStyles.Mixed
-  const gradient     = genderGradients[hostel.gender] ?? genderGradients.Mixed
-  const distance     = hostel.distanceFromCampus ?? hostel.distanceFromGate ?? null
-  const isFull       = hostel.status === 'full'
-  const isLimited    = hostel.status === 'limited'
+  const category = categoryConfig[hostel.category] ?? categoryConfig.school
+  const gender   = genderStyles[hostel.gender]     ?? genderStyles.Mixed
+  const gradient = genderGradients[hostel.gender]  ?? genderGradients.Mixed
+  const isFull   = hostel.status === 'full'
 
-  // ── Page ──────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl mx-auto pb-12">
 
-      {/* ── Breadcrumb ── */}
-      <div className="flex items-center gap-2">
+      {/* ── Top Bar ── */}
+      <div className="flex items-center justify-between gap-4">
         <button
           onClick={() => navigate('/hostel')}
-          className="flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors"
+          className="inline-flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-gray-800 transition-colors"
         >
-          <ArrowLeft size={14} />
-          Hostel Listing
+          <ArrowLeft size={16} />
+          Back to Hostel Listings
         </button>
-        <span className="text-gray-300">/</span>
-        <span className="text-xs font-semibold text-gray-700 truncate">{hostel.name}</span>
-        {hostel.featured && (
-          <span
-            className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1"
-            style={{ backgroundColor: '#e8f5e9', color: '#0B5D1E' }}
-          >
-            <Sparkles size={9} />
-            Featured
-          </span>
-        )}
+
+        <div className="flex items-center gap-2">
+          {hostel.availableForInspection ? (
+            <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+              <CalendarDays size={13} className="text-emerald-600" />
+              Physical Inspection Available
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+              Direct Booking Only
+            </span>
+          )}
+          {hostel.verified && (
+            <span className="flex items-center gap-1 text-xs font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-100">
+              <ShieldCheck size={13} className="text-amber-600" />
+              Verified Agent
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* ── Limited availability banner ── */}
-      {isLimited && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-red-100 bg-red-50">
-          <Flame size={15} className="text-red-500 flex-shrink-0" />
-          <p className="text-xs text-red-700 font-medium">
-            <strong>High demand:</strong> Only a few beds remain in this hostel. Book soon to secure your spot.
-          </p>
-        </div>
-      )}
-
-      {/* ── Hero section ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* Gallery — 2 columns */}
-        <div className="lg:col-span-2">
-          <HostelGallery hostel={hostel} />
-        </div>
-
-        {/* Info sidebar */}
-        <div className="space-y-4">
-
-          {/* Category + gender + verified badges */}
-          <div className="flex items-center gap-2 flex-wrap">
+      {/* ── Title block ── */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
             <span
-              className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full"
-              style={{ backgroundColor: catConfig.bg, color: catConfig.color }}
+              className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full"
+              style={{ backgroundColor: category.bg, color: category.color }}
             >
-              {catConfig.label}
+              {category.label}
             </span>
             <span
-              className="text-[10px] font-bold px-2.5 py-1 rounded-full"
-              style={{ backgroundColor: gStyle.bg, color: gStyle.color }}
+              className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full"
+              style={{ backgroundColor: gender.bg, color: gender.color }}
             >
               {hostel.gender}
             </span>
-            {hostel.verified && (
-              <span
-                className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full"
-                style={{ backgroundColor: '#e8f5e9', color: '#0B5D1E' }}
-              >
-                <ShieldCheck size={10} />
-                Verified
-              </span>
-            )}
-          </div>
-
-          {/* Name + rating */}
-          <div>
-            <h1 className="text-xl font-bold text-gray-800 leading-snug">{hostel.name}</h1>
-            {hostel.rating && (
-              <div className="flex items-center gap-1.5 mt-1.5">
-                {[1,2,3,4,5].map((s) => (
-                  <Star
-                    key={s}
-                    size={12}
-                    className={s <= Math.round(hostel.rating) ? 'text-amber-400' : 'text-gray-200'}
-                    fill={s <= Math.round(hostel.rating) ? 'currentColor' : 'none'}
-                  />
-                ))}
-                <span className="text-sm font-bold text-gray-700 ml-0.5">{hostel.rating.toFixed(1)}</span>
-                {hostel.reviewCount && (
-                  <span className="text-xs text-gray-400">({hostel.reviewCount} reviews)</span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Location */}
-          <div className="flex items-start gap-2 text-sm text-gray-500">
-            <MapPin size={13} className="flex-shrink-0 mt-0.5 text-gray-400" />
-            <div>
-              <p className="text-xs">{hostel.location}</p>
-              {hostel.address && (
-                <p className="text-[11px] text-gray-400 mt-0.5">{hostel.address}</p>
-              )}
-              {distance && (
-                <p className="text-[11px] font-semibold mt-1" style={{ color: '#0B5D1E' }}>
-                  {distance} from campus
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Availability status */}
-          <div className="flex items-center justify-between">
             <AvailabilityBadge status={hostel.status} />
-            {hostel.totalRooms && (
-              <span className="text-[11px] text-gray-400 font-medium">
-                {hostel.availableRooms} of {hostel.totalRooms} rooms open
-              </span>
-            )}
           </div>
 
-          {/* Occupancy bar */}
-          {hostel.occupancyRate != null && (
-            <div className="bg-gray-50 rounded-xl p-3.5 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-1.5 font-semibold text-gray-600">
-                  <BarChart3 size={12} />
-                  Occupancy
-                </span>
-                <span
-                  className="font-black"
-                  style={{ color: hostel.occupancyRate >= 90 ? '#ef4444' : hostel.occupancyRate >= 75 ? '#d97706' : '#16a34a' }}
-                >
-                  {hostel.occupancyRate}%
-                </span>
-              </div>
-              <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${hostel.occupancyRate}%`,
-                    backgroundColor: hostel.occupancyRate >= 90 ? '#ef4444' : hostel.occupancyRate >= 75 ? '#f59e0b' : '#22c55e',
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-800 tracking-tight">
+            {hostel.name}
+          </h1>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400 mt-2">
+            <span className="flex items-center gap-1">
+              <MapPin size={14} className="text-gray-400" />
+              {hostel.location}
+            </span>
+            <span>·</span>
+            <span>{hostel.distanceFromCampus} from FUOYE main gate</span>
+          </div>
+        </div>
+
+        {/* Pricing chip */}
+        <div className="sm:text-right bg-white border border-gray-100 p-4 rounded-2xl shadow-sm flex-shrink-0">
+          <p className="text-xs text-gray-400 font-medium">Starting Rent</p>
+          <p className="text-xl sm:text-2xl font-extrabold text-gray-800 mt-0.5">
+            ₦{hostel.priceRange.min.toLocaleString()}
+            <span className="text-xs font-medium text-gray-400"> /session</span>
+          </p>
+          <p className="text-[11px] text-emerald-700 font-semibold mt-1">
+            {hostel.availableRooms} vacant room{hostel.availableRooms === 1 ? '' : 's'} available
+          </p>
+        </div>
+      </div>
+
+      {/* ── Photo gallery ── */}
+      <HostelGallery hostel={hostel} />
+
+      {/* ── Main content grid ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* Left 2 cols */}
+        <div className="lg:col-span-2 space-y-6">
+
+          {/* Description */}
+          {hostel.description && (
+            <section className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <SectionHeader title="About this Space" />
+              <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-line">
+                {hostel.description}
+              </p>
+            </section>
+          )}
+
+          {/* Vacant Rooms */}
+          <section className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <SectionHeader
+              title="Available Rooms for Rent"
+              subtitle="Select a room to reserve or schedule a physical inspection with the caretaker"
+            />
+            <div className="space-y-3">
+              {hostel.roomOptions?.map((room) => (
+                <RoomOptionCard
+                  key={room.id}
+                  roomOption={room}
+                  hostelGender={hostel.gender}
+                  selected={selectedRoom?.id === room.id}
+                  onSelect={(r) => {
+                    setSelectedRoom(prev => prev?.id === r.id ? null : r)
                   }}
                 />
-              </div>
+              ))}
             </div>
-          )}
+          </section>
 
-          {/* Price range card */}
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
-            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Price range</p>
-            <div className="flex items-baseline gap-1.5 mt-1">
-              <span className="text-2xl font-black text-gray-800">
-                ₦{hostel.priceRange.min.toLocaleString()}
-              </span>
-              {hostel.priceRange.max !== hostel.priceRange.min && (
-                <span className="text-sm font-semibold text-gray-400">
-                  – ₦{hostel.priceRange.max.toLocaleString()}
-                </span>
+          {/* Amenities */}
+          {hostel.tags?.length > 0 && (
+            <section className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <SectionHeader title="Amenities & Features" />
+              <div className="flex flex-wrap gap-2">
+                {hostel.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-50 border border-gray-100 text-gray-700"
+                  >
+                    <Sparkles size={12} className="text-emerald-700" />
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* Right col: Agent contact & booking sidebar */}
+        <div className="space-y-6">
+
+          {/* Agent Contact Card */}
+          <section className="bg-white rounded-2xl border border-emerald-100 p-5 shadow-sm bg-gradient-to-br from-white to-emerald-50/40">
+            <SectionHeader title="Agent / Caretaker Contact" subtitle="Inquire or schedule a direct viewing" />
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-sm">
+                  {hostel.contact?.name?.slice(0, 2).toUpperCase() || 'AG'}
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-gray-800">{hostel.contact?.name || 'Listed Agent / Caretaker'}</p>
+                  <p className="text-[10px] text-emerald-700 font-semibold">Verified FUOYE Partner</p>
+                </div>
+              </div>
+
+              {hostel.contact?.phone && (
+                <a
+                  href={`tel:${hostel.contact.phone}`}
+                  className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-emerald-700 text-white font-semibold text-xs hover:bg-emerald-800 transition-colors shadow-sm"
+                >
+                  <Phone size={14} />
+                  Call Agent: {hostel.contact.phone}
+                </a>
               )}
             </div>
-            <p className="text-[10px] text-gray-400 mt-0.5">per bed · per session</p>
-          </div>
+          </section>
 
-          {/* Selected room chip */}
-          {selectedRoom && (
-            <div
-              className="flex items-center gap-2.5 p-3 rounded-xl border-2"
-              style={{ borderColor: '#0B5D1E', backgroundColor: '#f0fdf4' }}
-            >
-              <div
-                className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center"
-                style={{ backgroundColor: '#0B5D1E' }}
-              >
-                <BedDouble size={14} className="text-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-bold text-gray-700 truncate">{selectedRoom.type}</p>
-                <p className="text-[10px]" style={{ color: '#0B5D1E' }}>
-                  ₦{selectedRoom.pricePerBed.toLocaleString()}/{selectedRoom.pricePeriod}
+          {/* Booking CTA sidebar card */}
+          {!isFull && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm space-y-4">
+              <div>
+                <p className="text-sm font-bold text-gray-800">
+                  {selectedRoom ? `Selected: Room ${selectedRoom.type}` : 'Reserve a Room'}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {selectedRoom ? `₦${selectedRoom.pricePerBed.toLocaleString()} / session` : 'Select a room from the list to book'}
                 </p>
               </div>
-              <button
-                onClick={() => setSelectedRoom(null)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
 
-          {/* CTA button */}
-          {!isFull && (
-            <Button
-              fullWidth
-              icon={CalendarDays}
-              onClick={() => openBookingModal(selectedRoom)}
-            >
-              {selectedRoom ? `Book ${selectedRoom.type}` : 'Request Bed Allocation'}
-            </Button>
-          )}
-          {isFull && (
-            <div className="flex items-center gap-2 p-3 rounded-xl border border-red-100 bg-red-50">
-              <Info size={13} className="text-red-500 flex-shrink-0" />
-              <p className="text-[11px] text-red-600 font-medium">
-                This hostel is currently full. Check back later.
-              </p>
+              <Button
+                fullWidth
+                icon={CalendarCheck}
+                onClick={() => openBookingModal(selectedRoom)}
+              >
+                {selectedRoom ? 'Schedule Inspection / Reserve' : 'Book Selected Room'}
+              </Button>
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Description ── */}
-      {hostel.description && (
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <SectionHeader title="About this Hostel" />
-          <p className="text-sm text-gray-500 leading-relaxed">{hostel.description}</p>
-          {hostel.tags?.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-4">
-              {hostel.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-500"
-                >
-                  #{tag}
-                </span>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* ── Room Options ── */}
-      <section>
-        <SectionHeader
-          title="Available Room Types"
-          subtitle="Select a room type to pre-fill your booking request"
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {hostel.roomOptions.map((room) => (
-            <RoomOptionCard
-              key={room.id}
-              roomOption={room}
-              hostelGender={hostel.gender}
-              selected={selectedRoom?.id === room.id}
-              onSelect={(r) => {
-                setSelectedRoom(r)
-                openBookingModal(r)
-              }}
-            />
-          ))}
-        </div>
-      </section>
-
-      {/* ── Amenities ── */}
-      {hostel.amenities?.length > 0 && (
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <SectionHeader
-            title="Amenities"
-            subtitle={`${hostel.amenities.length} facilities included`}
-          />
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {hostel.amenities.map((a) => (
-              <div key={a} className="flex items-center gap-2.5">
-                <span
-                  className="w-7 h-7 rounded-lg flex-shrink-0 flex items-center justify-center"
-                  style={{ backgroundColor: '#e8f5e9' }}
-                >
-                  <CheckCircle2 size={13} style={{ color: '#0B5D1E' }} />
-                </span>
-                <span className="text-xs text-gray-600 font-medium">{a}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ── Contact / Enquiry (private hostels) ── */}
-      {hostel.contact && (
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <SectionHeader title="Contact & Enquiries" />
-          <div className="flex flex-wrap gap-4">
-            {hostel.contact.phone && (
-              <a
-                href={`tel:${hostel.contact.phone}`}
-                className="flex items-center gap-2 text-xs font-semibold hover:underline"
-                style={{ color: '#0B5D1E' }}
-              >
-                <Phone size={13} />
-                {hostel.contact.phone}
-              </a>
-            )}
-            {hostel.contact.name && (
-              <span className="flex items-center gap-2 text-xs text-gray-500">
-                <Users size={13} className="text-gray-400" />
-                Contact: {hostel.contact.name}
-              </span>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* ── House Rules (private hostels) ── */}
-      {hostel.rules?.length > 0 && (
-        <section className="rounded-2xl border border-amber-100 p-5" style={{ backgroundColor: '#fffbeb' }}>
-          <SectionHeader title="House Rules" />
-          <ul className="space-y-2">
-            {hostel.rules.map((r) => (
-              <li key={r} className="flex items-start gap-2.5 text-xs text-amber-800">
-                <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
-                {r}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* ── Booking CTA banner ── */}
-      {!isFull && (
-        <div
-          className="rounded-2xl p-6 flex flex-col sm:flex-row items-center justify-between gap-5 overflow-hidden relative"
-          style={{ background: gradient }}
-        >
-          {/* Decorative circles */}
-          <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full opacity-10 bg-white pointer-events-none" />
-          <div className="absolute -bottom-10 -left-6 w-28 h-28 rounded-full opacity-10 bg-white pointer-events-none" />
-
-          <div className="relative z-10">
-            <p className="text-white font-bold text-base leading-snug">
-              {selectedRoom
-                ? `Ready to book your ${selectedRoom.type}?`
-                : 'Ready to secure your bed?'}
-            </p>
-            <p className="text-white/70 text-xs mt-1 leading-relaxed">
-              {selectedRoom
-                ? `₦${selectedRoom.pricePerBed.toLocaleString()} per session · Submit your request below`
-                : 'Select a room type above or proceed with a general bed request.'}
-            </p>
-          </div>
-
-          <Button
-            variant="secondary"
-            icon={CalendarCheck}
-            onClick={() => openBookingModal(selectedRoom)}
-            className="flex-shrink-0 relative z-10"
-          >
-            {selectedRoom ? 'Confirm & Book' : 'Request Bed Allocation'}
-          </Button>
-        </div>
-      )}
-
-      {/* ── Booking modal ── */}
+      {/* ── Booking & Inspection Modal ── */}
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -549,12 +418,12 @@ export default function HostelDetails() {
             <div className="flex items-start justify-between p-5 border-b border-gray-100">
               <div className="min-w-0 pr-3">
                 <h2 className="text-base font-bold text-gray-800 leading-snug">
-                  {success ? 'Booking Submitted!' : 'Request Bed Allocation'}
+                  {success ? 'Request Submitted!' : 'Room Inspection & Reservation'}
                 </h2>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {success
-                    ? 'Your request is pending approval.'
-                    : `${hostel.name}${selectedRoom ? ` · ${selectedRoom.type}` : ''}`}
+                    ? 'Your booking details have been registered.'
+                    : `${hostel.name}${selectedRoom ? ` · Room ${selectedRoom.type}` : ''}`}
                 </p>
               </div>
               <button
@@ -574,21 +443,32 @@ export default function HostelDetails() {
                 >
                   <CheckCircle2 size={32} style={{ color: '#0B5D1E' }} />
                 </div>
-                <h3 className="text-sm font-bold text-gray-800 mb-1">Request Submitted</h3>
-                <p className="text-xs text-gray-500 max-w-xs leading-relaxed mb-1">
-                  Your bed allocation request for{' '}
-                  <strong className="text-gray-700">{hostel.name}</strong>
-                  {selectedRoom && <> ({selectedRoom.type})</>} with move-in on{' '}
-                  <strong className="text-gray-700">
-                    {new Date(form.moveInDate + 'T00:00:00').toLocaleDateString('en-NG', {
-                      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-                    })}
-                  </strong>{' '}
-                  has been submitted.
+                <h3 className="text-sm font-bold text-gray-800 mb-1">
+                  {form.requiresInspection ? 'Inspection Scheduled!' : 'Room Reserved Successfully!'}
+                </h3>
+                <p className="text-xs text-gray-500 max-w-xs leading-relaxed mb-3">
+                  {form.requiresInspection ? (
+                    <>
+                      Your physical room inspection for <strong className="text-gray-700">{hostel.name} (Room {selectedRoom?.type})</strong> has been set for{' '}
+                      <strong className="text-gray-700">
+                        {new Date(form.inspectionDate + 'T00:00:00').toLocaleDateString('en-NG', {
+                          weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+                        })}
+                      </strong>. The caretaker has been notified.
+                    </>
+                  ) : (
+                    <>
+                      Your room reservation for <strong className="text-gray-700">{hostel.name} (Room {selectedRoom?.type})</strong> has been confirmed.
+                    </>
+                  )}
                 </p>
-                <p className="text-[11px] text-gray-400 mb-6">
-                  You will be notified once the hostel admin processes your request.
-                </p>
+
+                {hostel.contact?.phone && (
+                  <div className="w-full bg-emerald-50 border border-emerald-100 p-3 rounded-xl mb-4 text-xs text-emerald-800 font-semibold">
+                    📞 Caretaker Contact: {hostel.contact.phone}
+                  </div>
+                )}
+
                 <div className="flex gap-3 w-full">
                   <Button variant="outline" fullWidth onClick={closeModal}>
                     Close
@@ -598,7 +478,7 @@ export default function HostelDetails() {
                     icon={CalendarCheck}
                     onClick={() => { closeModal(); navigate('/bookings') }}
                   >
-                    View Bookings
+                    View My Pass
                   </Button>
                 </div>
               </div>
@@ -616,12 +496,65 @@ export default function HostelDetails() {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-bold text-gray-700 truncate">{hostel.name}</p>
                     <p className="text-[10px] text-gray-400">
-                      {selectedRoom ? selectedRoom.type : 'No room type selected'}
+                      {selectedRoom ? `Room ${selectedRoom.type}` : 'No room type selected'}
                       {selectedRoom && ` · ₦${selectedRoom.pricePerBed.toLocaleString()}/session`}
                     </p>
                   </div>
                   <AvailabilityBadge status={hostel.status} />
                 </div>
+
+                {/* Inspection Option Choice (Option A: Schedule Physical Inspection) */}
+                {hostel.availableForInspection && (
+                  <div className="space-y-2 pt-1 border-t border-gray-100">
+                    <label className="text-xs font-bold text-gray-700 block">
+                      Inspection Preference
+                    </label>
+
+                    <label className="flex items-center gap-3 p-3 rounded-xl border border-emerald-100 bg-emerald-50/50 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="requiresInspection"
+                        checked={form.requiresInspection}
+                        onChange={() => setForm((f) => ({ ...f, requiresInspection: true }))}
+                        className="w-4 h-4 text-emerald-700 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <p className="text-xs font-bold text-emerald-900">Option A: Schedule Physical Inspection</p>
+                        <p className="text-[10px] text-emerald-700">Pick a date to view the room in person with the caretaker</p>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="requiresInspection"
+                        checked={!form.requiresInspection}
+                        onChange={() => setForm((f) => ({ ...f, requiresInspection: false }))}
+                        className="w-4 h-4 text-emerald-700 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <p className="text-xs font-bold text-gray-800">Option B: Direct Room Reservation</p>
+                        <p className="text-[10px] text-gray-400">Skip physical inspection & reserve room directly</p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {/* Inspection Date (if Option A chosen) */}
+                {form.requiresInspection && (
+                  <Input
+                    label="Preferred Inspection Date"
+                    type="date"
+                    required
+                    min={new Date().toISOString().split('T')[0]}
+                    value={form.inspectionDate}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, inspectionDate: e.target.value }))
+                      if (errors.inspectionDate) setErrors((er) => ({ ...er, inspectionDate: undefined }))
+                    }}
+                    error={errors.inspectionDate}
+                  />
+                )}
 
                 {/* Student name */}
                 <Input
@@ -673,18 +606,11 @@ export default function HostelDetails() {
                   />
                 </div>
 
-                {/* Duplicate error */}
+                {/* Errors */}
                 {errors.duplicate && (
                   <div className="p-3 rounded-xl border border-red-100 bg-red-50">
                     <p className="text-red-600 text-xs leading-snug">{errors.duplicate}</p>
                   </div>
-                )}
-
-                {/* No room selected hint */}
-                {!selectedRoom && (
-                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
-                    Tip: Select a room type from the listing for a more specific request.
-                  </p>
                 )}
 
                 {/* Actions */}
@@ -693,7 +619,7 @@ export default function HostelDetails() {
                     Cancel
                   </Button>
                   <Button type="submit" fullWidth icon={CalendarDays} loading={submitting}>
-                    Submit Request
+                    {form.requiresInspection ? 'Schedule Inspection' : 'Confirm Reservation'}
                   </Button>
                 </div>
               </form>

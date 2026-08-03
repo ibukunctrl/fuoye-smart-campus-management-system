@@ -1,16 +1,16 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   CalendarCheck, Building2, BookOpen, CheckCircle2, XCircle,
-  Clock, Search, Filter,
+  Clock, Search, Filter, Loader2
 } from 'lucide-react'
-import { getBookings, approveBooking, rejectBooking } from '../../utils/storage'
+import { api } from '../../services/api'
 import { cn } from '../../utils/cn'
 
 const STATUS_CFG = {
-  pending:   { label: 'Pending',   bg: '#fffbeb', color: '#b45309', icon: Clock },
-  confirmed: { label: 'Confirmed', bg: '#e8f5e9', color: '#0B5D1E', icon: CheckCircle2 },
-  cancelled: { label: 'Cancelled', bg: '#fef2f2', color: '#dc2626', icon: XCircle },
-  rejected:  { label: 'Rejected',  bg: '#fef2f2', color: '#dc2626', icon: XCircle },
+  PENDING:   { label: 'Pending',   bg: '#fffbeb', color: '#b45309', icon: Clock },
+  CONFIRMED: { label: 'Confirmed', bg: '#e8f5e9', color: '#0B5D1E', icon: CheckCircle2 },
+  CANCELLED: { label: 'Cancelled', bg: '#fef2f2', color: '#dc2626', icon: XCircle },
+  REJECTED:  { label: 'Rejected',  bg: '#fef2f2', color: '#dc2626', icon: XCircle },
 }
 
 function StatusBadge({ status }) {
@@ -26,43 +26,61 @@ function StatusBadge({ status }) {
 }
 
 const FILTER_TABS = [
-  { label: 'All',       value: 'all' },
-  { label: 'Pending',   value: 'pending' },
-  { label: 'Confirmed', value: 'confirmed' },
-  { label: 'Rejected',  value: 'rejected' },
-  { label: 'Cancelled', value: 'cancelled' },
+  { label: 'All',       value: 'ALL' },
+  { label: 'Pending',   value: 'PENDING' },
+  { label: 'Confirmed', value: 'CONFIRMED' },
+  { label: 'Rejected',  value: 'REJECTED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
 ]
 
 export default function AdminBookings() {
-  const [filterStatus, setFilterStatus] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('ALL')
   const [search, setSearch]             = useState('')
-  const [bookings, setBookings]         = useState(() => getBookings())
+  const [bookings, setBookings]         = useState([])
+  const [loading, setLoading]           = useState(true)
 
-  const refresh = () => setBookings(getBookings())
-
-  function handleApprove(id) {
-    approveBooking(id)
-    refresh()
+  const loadBookings = async () => {
+    setLoading(true)
+    const data = await api.getAllBookings()
+    if (data) setBookings(data)
+    setLoading(false)
   }
 
-  function handleReject(id) {
-    rejectBooking(id)
-    refresh()
+  useEffect(() => {
+    loadBookings()
+  }, [])
+
+  async function handleApprove(id) {
+    const success = await api.updateBookingStatus(id, 'CONFIRMED')
+    if (success) loadBookings()
+  }
+
+  async function handleReject(id) {
+    const success = await api.updateBookingStatus(id, 'REJECTED')
+    if (success) loadBookings()
   }
 
   const displayed = useMemo(() => {
     const q = search.toLowerCase()
     return bookings.filter((b) => {
-      const matchStatus = filterStatus === 'all' || b.status === filterStatus
+      const matchStatus = filterStatus === 'ALL' || b.status === filterStatus
       const matchSearch = !q ||
-        b.roomName?.toLowerCase().includes(q) ||
-        b.userMatric?.toLowerCase().includes(q) ||
+        b.facility?.name?.toLowerCase().includes(q) ||
+        b.user?.matricNumber?.toLowerCase().includes(q) ||
         b.id?.toLowerCase().includes(q)
       return matchStatus && matchSearch
     })
   }, [bookings, filterStatus, search])
 
-  const pending = bookings.filter((b) => b.status === 'pending').length
+  const pending = bookings.filter((b) => b.status === 'PENDING').length
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <Loader2 size={32} className="animate-spin text-green-700" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -140,49 +158,56 @@ export default function AdminBookings() {
                 <tr key={b.id} className="hover:bg-gray-50 transition-colors">
                   {/* ID */}
                   <td className="px-4 py-3.5">
-                    <p className="text-[11px] font-mono text-gray-500">{b.id}</p>
+                    <p className="text-[11px] font-mono text-gray-500">{b.id.substring(0, 8)}</p>
                   </td>
                   {/* Student */}
                   <td className="px-4 py-3.5">
-                    <p className="text-xs font-semibold text-gray-800">{b.userMatric ?? 'N/A'}</p>
+                    <p className="text-xs font-semibold text-gray-800">{b.user?.matricNumber ?? 'N/A'}</p>
+                    <p className="text-[10px] text-gray-500">{b.user?.fullName}</p>
                   </td>
                   {/* Type */}
                   <td className="px-4 py-3.5">
                     <div className="flex items-center gap-1.5">
                       <div
                         className="w-6 h-6 rounded-md flex items-center justify-center"
-                        style={{ backgroundColor: b.type === 'hostel' ? '#e8f5e9' : '#e3f2fd' }}
+                        style={{ backgroundColor: b.facility?.type?.includes('HOSTEL') ? '#e8f5e9' : '#e3f2fd' }}
                       >
-                        {b.type === 'hostel'
+                        {b.facility?.type?.includes('HOSTEL')
                           ? <Building2 size={11} style={{ color: '#0B5D1E' }} />
                           : <BookOpen   size={11} style={{ color: '#1565c0' }} />}
                       </div>
-                      <span className="text-[11px] font-medium text-gray-600 capitalize">{b.type}</span>
+                      <span className="text-[11px] font-medium text-gray-600 capitalize">
+                        {b.facility?.type?.includes('HOSTEL') ? 'Hostel' : 'Classroom'}
+                      </span>
                     </div>
                   </td>
                   {/* Room */}
                   <td className="px-4 py-3.5">
-                    <p className="text-xs font-semibold text-gray-700 whitespace-nowrap">{b.roomName}</p>
+                    <p className="text-xs font-semibold text-gray-700 whitespace-nowrap">
+                      {b.facility?.name || 'Unknown'} {b.room?.roomNumber ? `(${b.room.roomNumber})` : ''}
+                    </p>
                     <p className="text-[10px] text-gray-400">{b.purpose}</p>
                   </td>
                   {/* Date */}
                   <td className="px-4 py-3.5">
-                    <p className="text-xs text-gray-600">{b.date || '—'}</p>
-                    {b.startTime && <p className="text-[10px] text-gray-400">{b.startTime}</p>}
+                    <p className="text-xs text-gray-600">{new Date(b.startTime).toLocaleDateString()}</p>
+                    <p className="text-[10px] text-gray-400">{new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                   </td>
                   {/* Session / Duration */}
                   <td className="px-4 py-3.5">
-                    <p className="text-xs text-gray-600 whitespace-nowrap">{b.duration || '—'}</p>
+                    <p className="text-xs text-gray-600 whitespace-nowrap">
+                      {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   </td>
                   {/* Status */}
                   <td className="px-4 py-3.5"><StatusBadge status={b.status} /></td>
                   {/* Actions */}
                   <td className="px-4 py-3.5">
-                    {b.status === 'pending' ? (
+                    {b.status === 'PENDING' ? (
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => handleApprove(b.id)}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white transition-colors hover:opacity-90"
                           style={{ backgroundColor: '#0B5D1E' }}
                         >
                           <CheckCircle2 size={11} /> Approve

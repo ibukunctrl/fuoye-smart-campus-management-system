@@ -10,7 +10,8 @@ import {
   X,
 } from 'lucide-react'
 import fuoyeLogo from '../../assets/images/fuoye-logo.jpg'
-import { getUser, getBookings } from '../../utils/storage'
+import { useAuth } from '../../context/AuthContext'
+import { api } from '../../services/api'
 
 const navItems = [
   { label: 'Dashboard',         path: '/dashboard', icon: LayoutDashboard },
@@ -22,15 +23,16 @@ const navItems = [
 ]
 
 export default function Sidebar({ isOpen, onClose }) {
-  const [, forceRender] = useState(0)
+  const { user } = useAuth()
+  const [unread, setUnread] = useState(0)
 
   useEffect(() => {
-    const refresh = () => forceRender((n) => n + 1)
-    window.addEventListener('fuoye_user_updated', refresh)
-    return () => window.removeEventListener('fuoye_user_updated', refresh)
+    async function load() {
+      const b = await api.getMyBookings()
+      if (b) setUnread(b.filter(x => x.status === 'PENDING').length)
+    }
+    load()
   }, [])
-
-  const user = getUser()
 
   return (
     <aside
@@ -73,7 +75,6 @@ export default function Sidebar({ isOpen, onClose }) {
       {/* Nav links */}
       <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
         {navItems.map(({ label, path, icon: Icon, badge }) => {
-          const unread = badge ? getBookings().filter((b) => b.status === 'pending').length : 0
           return (
             <NavLink
               key={path}
@@ -124,10 +125,10 @@ export default function Sidebar({ isOpen, onClose }) {
             className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
             style={{ backgroundColor: '#6DBE45' }}
           >
-            {(user?.name ?? 'ST').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+            {(user?.fullName ?? 'ST').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-white text-xs font-semibold truncate">{user?.name ?? 'Student User'}</p>
+            <p className="text-white text-xs font-semibold truncate">{user?.fullName ?? 'Student User'}</p>
             <p className="text-white/40 text-[10px] truncate">
               {user?.email ?? user?.matricNumber ?? 'fuoye.edu.ng'}
             </p>

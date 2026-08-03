@@ -12,9 +12,7 @@ import {
 } from "lucide-react";
 
 import fuoyeLogo from "../../assets/images/fuoye-logo.jpg";
-
-import { saveUser } from "../../utils/storage";
-import { validateLogin } from "../../utils/authStorage";
+import { useAuth } from "../../context/AuthContext";
 
 const features = [
   {
@@ -34,11 +32,10 @@ const features = [
   },
 ];
 
-const ADMIN_EMAIL = "admin@fuoye.edu.ng";
-const ADMIN_PASSWORD = "admin123";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const [mode, setMode] = useState("student");
 
@@ -118,32 +115,23 @@ export default function Login() {
         return;
       }
 
-      if (
-        adminForm.email.trim().toLowerCase() !== ADMIN_EMAIL ||
-        adminForm.password !== ADMIN_PASSWORD
-      ) {
-        setErrors({
-          credential:
-            "Invalid admin credentials. Please check your email and password.",
-        });
+      setLoading(true);
 
+      const result = await login(
+        adminForm.email.trim(),
+        adminForm.password
+      );
+
+      if (!result || !result.success) {
+        setLoading(false);
+        setErrors({
+          credential: result?.message || "Invalid admin credentials.",
+        });
         return;
       }
 
-      setLoading(true);
-
-      await new Promise((res) => setTimeout(res, 1000));
-
-      saveUser({
-        name: "System Admin",
-        email: ADMIN_EMAIL,
-        role: "admin",
-      });
-
       setLoading(false);
-
       navigate("/admin/dashboard");
-
       return;
     }
 
@@ -165,27 +153,20 @@ export default function Login() {
 
     setLoading(true);
 
-    await new Promise((res) => setTimeout(res, 1200));
-
-    const user = validateLogin(
+    const result = await login(
       studentForm.matricNumber.trim(),
-      studentForm.password,
+      studentForm.password
     );
 
-    if (!user) {
+    if (!result || !result.success) {
       setLoading(false);
-
       setErrors({
-        credential: "Invalid matric number or password",
+        credential: result?.message || "Invalid matric number or password. Please try again.",
       });
-
       return;
     }
 
-    saveUser(user);
-
     setLoading(false);
-
     navigate("/dashboard");
   }
 

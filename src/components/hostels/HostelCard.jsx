@@ -24,14 +24,15 @@ export default function HostelCard({ hostel }) {
   const navigate = useNavigate()
   const {
     slug, code, name, gender, category, location, status,
-    images, priceRange, verified, rating, reviewCount,
+    imageUrl, images, priceRange, verified, rating, reviewCount,
     distanceFromCampus, distanceFromGate, featured,
   } = hostel
 
   const gradient     = genderGradients[gender] ?? genderGradients.Mixed
   const catStyle     = categoryStyles[category] ?? categoryStyles.school
   const genderStyle  = genderStyles[gender] ?? genderStyles.Mixed
-  const thumbnail    = images?.thumbnail ?? images?.outdoor?.[0] ?? null
+  // DB imageUrl takes priority; fall back to legacy static import
+  const thumbnail    = imageUrl ?? images?.thumbnail ?? images?.outdoor?.[0] ?? null
   const distance     = distanceFromCampus ?? distanceFromGate ?? null
 
   return (
