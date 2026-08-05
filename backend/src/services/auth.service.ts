@@ -88,8 +88,14 @@ export class AuthService {
   }
 
   public static async login(dto: LoginInput, ipAddress: string) {
-    const user = await prisma.user.findUnique({
-      where: { matricNumber: dto.matricNumber },
+    // Support login by either matric number OR email (for admin accounts)
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { matricNumber: dto.matricNumber },
+          { email: dto.matricNumber },
+        ],
+      },
     });
 
     if (!user) {
